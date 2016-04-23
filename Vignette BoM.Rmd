@@ -1,0 +1,650 @@
+---
+title: "Vignette for accessing Australian Weather Data"
+author: "Ebony Jones, Andrew Robinson, Kate Saunders and Adam Sparks"
+date: "22 April 2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+oz_stations <- readRDS("oz_stations.RData")
+oz_tmax_stations <- oz_stations[oz_stations$element == "TMAX", ]
+oz_prcp_stations <- oz_stations[oz_stations$element == "PRCP", ]
+```
+
+This vignette is designed to outline methods for accessing Bureau of Meteorology station data and the Australian Water Availability Project (AWAP) gridded datasets. The rnoaa package has Australian station data from the Global Historical Climatology Network (GHNC), for details see (https://www.ncdc.noaa.gov/data-access/land-based-station-data/land-based-datasets/global-historical-climatology-network-ghcn) .
+
+# Outline:
+
+### Installation
+
+As some of the needed functionality is still in active development and the rnoaa package needs to be downloaded directly from github instead of Cran.
+
+```{r, echo = T, eval = F}
+# devtools::install_github("rOpenScieLabs/rnoaa")
+library(devtools)
+devtools::install_github("hrbrmstr/rnoaa")
+library(rnoaa)
+```
+
+### What station data is available?
+
+Currently available through the GHDN dataset are 16420 unique station names. The data types availabe for these stations are:
+
+EBONY TO INSERT TABLE
+
+The code to extract the meta data for Australian stations from the GHDN database is shown below.
+
+```{r,echo = T, eval = F}
+stations <- ghcnd_stations()
+list_oz_stations <- grep('^ASN', stations$data$id)
+oz_stations <- stations$data[list_oz_stations,]
+```
+
+For two of the data types, TMAX and PRCP, the station locations are displayed below:
+
+```{r, echo = F}
+library(ggplot2)
+tmax_plot <- ggplot(oz_tmax_stations, aes(x = longitude, y = latitude))
+tmax_plot + ggtitle("TMAX") + geom_point(col = "red")
+```
+
+```{r, echo = F}
+prcp_plot <- ggplot(oz_prcp_stations, aes(x = longitude, y = latitude))
+prcp_plot + ggtitle("PRCP") + geom_point(col = "blue")
+```
+
+Note that it is suspected there is some descrepancy within the GHDN station network as compared with raw BoM station data available through the Weather Station Directory (http://www.bom.gov.au/climate/data/stations/). These  differences include homogenisation processes, different quality controls and in some cases differences in the station availabilty, with the Bureau of Meteorology holding more complete records.
+
+### To extract data directly from BoM
+
+For users who prefer to directly download station meta data from the BoM; it is possible to pull the meta data for station directly through the BoM ftp server.
+
+```{r, echo = T, eval = F}
+### Just need the RCurl package
+
+library(RCurl)
+
+### Declare the BOM ftp URL for the directory
+
+url <- "ftp://ftp.bom.gov.au/anon2/home/ncc/metadata/lists_by_element/numeric/"
+
+### No need for a userid or a password
+
+# userpwd <- "yourUser:yourPass"
+
+### Read the filenames that correspond to files stored in the directory
+
+filenames <- getURL(url,
+                  # userpwd = userpwd,
+                    ftp.use.epsv = FALSE,
+                    dirlistonly = TRUE)
+
+### They come as a single string - split this string into a list using
+### "\n", then name that list into a vector.
+
+filenames <- unlist(strsplit(filenames, "\n"))
+
+### Check the number of files by state - extract the State id from the
+### file names and tabulate.
+
+by.state <- gsub("_", "", substr(filenames, 4, 6))
+
+table(by.state)
+
+### Narrow the files down to to just AUS
+
+(filenames <- grep("AUS", filenames, value = TRUE))
+
+### Draft a function to download the files by name
+
+get.one <- function(fileName) {
+    address <- paste(url, fileName, sep = "")
+    cat(address, "\n")
+    out <- getURL(address, ftp.use.epsv = FALSE)
+    return(out)
+}
+
+### Try it out
+
+(test <- get.one(filenames[1]))
+
+### It works! Ok grab them all and save them as a list using lapply
+
+metaData <- lapply(filenames, get.one)
+
+### Processing begins - name the list items using the file names
+
+names(metaData) <- filenames
+
+### Back up in case of user error.  Don't want to download again.
+
+backup <- metaData
+
+metaData <- backup
+
+### Each downloaded file is a long string.  We want to split it into
+### lines. Need to split on "\r\n" for some files
+
+metaData <- lapply(metaData,
+                   function (x) {
+                       unlist(strsplit(x, "\r\n"))
+                   })
+
+### Also need to split on "\n" for some files
+
+metaData <- lapply(metaData,
+                   function (x) {
+                       unlist(strsplit(x, "\n"))
+                   })
+
+### Grab the second lines to see what each file describes
+
+(second.lines <- lapply(metaData, function (x) return (x[2])))
+
+### Grab the third lines to get the column headings
+
+(column.names <- sapply(metaData, function (x) return (x[3])))
+
+### Oh dear!  They are not all the same.  How many are there?
+
+table(nchar(column.names))
+
+### There are three.
+
+### Now write a suite of functions to scrape different data items Each
+### is a variant on the fundamental theme: cut off the top and tail of
+### the file, use substring to grab the columns, and then manipulate
+### and coerce them as needed.
+
+scrape.site <- function(x)
+    return(gsub(" ", "",
+                substr(x[-c(1:4, (length(x) - 2):length(x))],
+                       1, 8)))
+
+scrape.site(metaData[[1]])
+
+scrape.name <- function(x)
+    return(gsub(" +$", "",
+                substr(x[-c(1:4, (length(x) - 2):length(x))],
+                       9, 49)))
+
+scrape.name(metaData[[1]])
+
+scrape.latitude <- function(x)
+    return(as.numeric(gsub(" ", "",
+                           substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                  50, 58))))
+
+scrape.latitude(metaData[[1]])
+
+scrape.longitude <- function(x)
+    return(as.numeric(gsub(" ", "",
+                           substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                  60, 68))))
+
+scrape.longitude(metaData[[1]])
+
+scrape.start <- function(x)
+    return(as.POSIXct(strptime(paste("15", substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                                  69, 76)), "%d %b %Y")))
+
+scrape.start(metaData[[1]])
+
+scrape.end <- function(x)
+    return(as.POSIXct(strptime(paste("15", substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                                  78, 85)), "%d %b %Y")))
+
+scrape.end(metaData[[1]])
+
+scrape.years <- function(x)
+    return(as.numeric(gsub(" ", "",
+                           substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                  87, 93))))
+
+scrape.years(metaData[[1]])
+
+scrape.percent <- function(x)
+    return(as.numeric(gsub(" ", "",
+                           substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                  95, 98))))
+
+scrape.percent(metaData[[1]])
+
+scrape.obs <- function(x)
+    return(as.numeric(gsub(" ", "",
+                           substr(x[-c(1:4, (length(x) - 2):length(x))],
+                                  101, 105))))
+
+scrape.obs(metaData[[1]])
+
+### Now!  Recall that there are two types of files that we care about;
+### one has the Obs column and the other does not.  Happily, that's
+### close to the end of the columns.  But it means that the AWS flag
+### is in a different position.
+
+scrape.AWSL <- function(x)
+    return(substr(x[-c(1:4, (length(x) - 2):length(x))],
+                  109, 109))
+
+scrape.AWSL(metaData[[1]])
+
+scrape.AWSS <- function(x)
+    return(substr(x[-c(1:4, (length(x) - 2):length(x))],
+                  101, 101))
+
+scrape.AWSS(metaData[["AUS_38.txt"]])
+
+### Hack: it might always be at the end of the string.  So we could
+### just use one function in that case.  But I don't care.
+
+### One function to bind them
+
+scrape.all <- function(x) {
+    if (nchar(x[3]) == 109) {
+        return(data.frame(
+            site = scrape.site(x),
+            name = scrape.name(x),
+            latitude = scrape.latitude(x),
+            longitude = scrape.longitude(x),
+            start = scrape.start(x),
+            end = scrape.end(x),
+            years = scrape.years(x),
+            percent = scrape.percent(x),
+            obs = scrape.obs(x),
+            AWS = scrape.AWSL(x),
+            product = x[2]
+            ))
+    } else {
+        if (nchar(x[3]) == 101) {
+            return(data.frame(
+                site = scrape.site(x),
+                name = scrape.name(x),
+                latitude = scrape.latitude(x),
+                longitude = scrape.longitude(x),
+                start = scrape.start(x),
+                end = scrape.end(x),
+                years = scrape.years(x),
+                percent = scrape.percent(x),
+                obs = NA,
+                AWS = scrape.AWSS(x),
+                product = x[2]
+                ))
+        } else {
+            return(NULL)
+        }
+    }
+}
+
+### Test the one function
+
+head(scrape.all(metaData[[1]]))
+
+### Run the one function across all the little bits.
+
+meta.list <- do.call(rbind, lapply(metaData, scrape.all))
+
+### No warnings.  Encouraging!  What does it look like?
+
+str(meta.list)
+
+### Some missing values in AWS coded as " "
+
+is.na(meta.list$AWS) <- meta.list$AWS == c(" ")
+
+meta.list$AWS <- factor(meta.list$AWS)
+
+### How many missing values now?
+
+sapply(meta.list, function(x) sum(is.na(x)))
+
+### I can live with that.
+
+# write.csv(meta.list, file = "~/Desktop/bom-meta.csv", row.names = FALSE)
+
+# save(meta.list, file = "~/Desktop/bom-meta.RData")
+
+```
+
+```{r, echo = FALSE}
+load("bom-meta.RData")
+
+```
+
+
+
+MIGHT BE NICE add to convert some of my code that does scraping for rainfall directly from BoM to be compatible with the meta data output?
+
+```{r, echo = T}
+#' This function will go to the Bureau of Meteorology Weather Data Portal
+#' and scrape the daily rainfall observational record for the input station number.
+#' The output is saved in a zip folder under the default destination name that is used
+#' by the Bureau of Meteorology.
+#'
+#' @param siteNum A string input for the station number. This is of width 6 padded with zeroes.
+#' @return The sum of \code{0} if there is an error, \code{1} if scrape was successful
+#' @examples
+#' scrapeBoMData("001000") #succeed in downloading a zip folder
+#' scrapeBoMData("000000") #fail in downloading a zip folder
+
+scrapeBoMData <- function(siteNum){
+  library(stringr)
+
+  searchstr <- "dailyZippedDataFile"
+  bom.site <- "http://www.bom.gov.au"
+  url.part1 <- "http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av?p_nccObsCode=136&p_display_type=dailyDataFile&p_startYear=&p_c=&p_stn_num="
+  destFile <- paste("IDCJAC0009_", siteNum, "_1800.zip", sep = "")
+
+  #scrape the bureau website for hyperlinks
+  url <- paste(url.part1, siteNum, sep = "")
+  html <- try(paste(readLines(url), collapse="\n"))
+  if (typeof(html)!= "character"){
+    #Error site not found, no data scraped
+    return(0)
+  }
+
+  #search for all hyperlinks
+  #(this step could be simplified if I knew about regexp)
+  hyper.links <- str_match_all(html, "<a href=\"(.*?)\"")[[1]][,2]
+  if (length(hyper.links) == 0){
+    #Error for no hyperlinks found
+    return(0)
+  }
+
+  #search for download link
+  matched = lapply(X = hyper.links, FUN = str_match, pattern = searchstr)
+  index = which(!is.na(matched) == 1)
+  if(length(index) == 0){
+#     print(paste("No zip file link for:", siteNum))
+    return(0)
+  }else if(length(index) == 1){
+    print(paste("Zip file link found for site number:", siteNum))
+    download.link = hyper.links[index]
+    #remove amp; from search regexp, and paste bom.site address to create full link
+    download.link = paste(bom.site, download.link, sep = "")
+    download.link = paste(strsplit(download.link, "amp;")[[1]], collapse = "")
+  } else {
+    print(paste("Error: More than one download link found", siteNum))
+    return(0)
+  }
+# desired hyperlink is of the form
+#"http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av?p_display_type=dailyZippedDataFile&p_stn_num=040911&p_c=-334751896&p_nccObsCode=136&p_startYear=2016"
+
+  #download the data (need to add bom site directory, and get rid of amp; from search)
+  try(download.file(url = download.link, destFile,  mode = "wb"))
+
+  return(1)
+}
+
+```
+
+Grab the data for Brunette Downs.
+
+```{r, get site, cache = TRUE}
+
+(BDs <- grep("BRUNETTE", meta.list$name, value = TRUE))
+
+meta.list[grep("BRUNETTE", meta.list$name), c("name", "site")]
+
+scrapeBoMData("015085")
+
+```
+
+#### How to get the data:
+* how to search for a location (radius search)
+* date range
+```{r,echo = F, eval = F}
+# library(ggmap)
+# 
+# bris_meta_data <-
+#   meteo_distance(data = oz_stations,
+#                  lat = #ggmap::geocode("brisbane")[[2]],
+#                  long = #ggmap::geocode("brisbane")[[1]],
+#                  radius = 15)
+# 
+# bris_df <- meteo_pull_monitors(unique(bris_meta_data$id))
+
+locn.long = 135.947
+locn.lat = -18.639
+stn_meta_data <-
+  meteo_distance(data = oz_stations,
+                 lat = locn.lat, #ggmap::geocode("brisbane")[[2]],
+                 long = locn.long, #ggmap::geocode("brisbane")[[1]],
+                 limit = 1)
+
+db = "GHCND"
+out1 <- ncdc(datasetid='GHCND', 
++              stationid= paste('GHCND:',stn_meta_data$id, sep = ""), 
++              datatypeid='TMAX', 
++              startdate = '2010-03-01', enddate = '2010-05-31',
++              token = 	api_key,
++              limit=500)
+
+ncdc_plot(out1)
+```
+
+#### How to read the data
+* give a plotted example  (rain/temp)
+
+#### Quality control
+
+It is important to note that although the station data is subject to some quality controls by BoM, not all data has been quality assured. This is particularly relevant for older observational records.
+
+Some of the common sources of erroreous observations within the records are:
+
+* Changes to station location 
+* Changes in observer behaviour
+* Changes in instrumentation
+* Rounding errors
+* Shifts in record
+* Heat island effect
+* Multiday accumulations errors (PRCP)
+* Spurious Zeroes (PRCP)
+* Undercatch (PRCP)
+
+Contributions of code to assess station record quality would be desirable. Currently there is no one size fits all approach.
+
+## Create a new section about AWAP data
+## Australian Water Availability Project (AWAP)
+http://www.csiro.au/awap/
+
+####
+This set of functions is used to automate downloading of AWAP data. Required are
+start date, end date and the weather variable(s) of interest. A `for()` loop
+follows that will download all dates from the BoM website.
+Ivan Hanigan, <ivan.hanigan@gmail.com>, J. Guillaume, F. Markham, G. Williamson
+and I. Szarka wrote the original versions of the functions used here to retrieve
+the AWAP grid files for the R packages,
+	[awaptools](https://github.com/swish-climate-impact-assessment/awaptools)
+and [swishdbtools](https://github.com/swish-climate-impact-assessment/swishdbtools).
+
+Once these functions are loaded, you can download and process AWAP grids.
+
+```{r, echo = T, eval = T}
+
+get_awap_data <- function(start_date, end_date, measure_i) {
+  variables_list <- list_variables()
+  variable <- variables_list[which(variables_list$measure == measure_i), ]
+  datelist <- seq(as.Date(start_date), as.Date(end_date), 1)
+  for (date_i in datelist) {
+    date_i <- as.Date(date_i, origin = "1970-01-01")
+    sdate <- as.character(date_i)
+    edate <- date_i
+    if (!file.exists(sprintf("%s_%s%s.grid", measure_i, gsub("-", "", sdate),
+                             gsub("-", "", edate)))) {
+      get_data_range(variable = as.character(variable[, 1]),
+                     measure = as.character(variable[, 2]),
+                     timestep = as.character(variable[, 3]),
+                     startdate = as.POSIXct(sdate),
+                     enddate = as.POSIXct(edate))
+      fname <- sprintf("%s_%s%s.grid.Z", measure_i, gsub("-", "", sdate),
+                       gsub("-", "", edate))
+      if (file.info(fname)$size == 0) {
+        file.remove(fname)
+        next
+      }
+      os <- linux_operating_system()
+      if (os) {
+        uncompress_linux(filename = fname)
+      }
+      else {
+        decompress_7zip(zipFileName = fname, outputDirectory = getwd(), TRUE)
+      }
+    }
+  }
+}
+
+get_data_range <- function(variable, measure, timestep, startdate, enddate) {
+  if (timestep == "daily") {
+    thisdate <- startdate
+    while (thisdate <= enddate) {
+      get_data(variable, measure, timestep, format(as.POSIXct(thisdate),
+                                                   "%Y%m%d"),
+               format(as.POSIXct(thisdate), "%Y%m%d"))
+      thisdate <- thisdate + as.double(as.difftime(1, units = "days"),
+                                       units = "secs")
+    }
+  }
+  else if (timestep == "month" | timestep == "monthly") {
+    timestep <- "month"
+    startdate <- as.POSIXlt(startdate)
+    startdate$mday <- 1
+    data_period_start <- seq(as.Date(startdate), as.Date(enddate),
+                             by = "month")
+    data_period_end <- as.Date(sapply(data_period_start,
+                                      FUN = function(x) {
+                                        as.character(seq(x, x + 40,
+                                                         by = "month")[2] - 1)
+                                      }
+    ))
+    for (i in 1:length(data_period_start)) {
+      get_data(variable, measure, timestep,
+               format(as.POSIXct(data_period_start[i]), "%Y%m%d"),
+               format(as.POSIXct(data_period_end[i]), "%Y%m%d"))
+    }
+  }
+}
+
+get_data <- function(variable, measure, timestep, startdate, enddate) {
+  url <- "http://www.bom.gov.au/web03/ncc/www/awap/{variable}/{measure}/{timestep}/grid/0.05/history/nat/{startdate}{enddate}.grid.Z"
+  url <- gsub("{variable}", variable, url, fixed = TRUE)
+  url <- gsub("{measure}", measure, url, fixed = TRUE)
+  url <- gsub("{timestep}", timestep, url, fixed = TRUE)
+  url <- gsub("{startdate}", startdate, url, fixed = TRUE)
+  url <- gsub("{enddate}", enddate, url, fixed = TRUE)
+  try(download.file(url, sprintf("%s_%s%s.grid.Z", measure, startdate, enddate),
+                    mode = "wb"))
+}
+
+list_variables <- function() {
+  variables_list <- "variable,measure,timestep\nrainfall,totals,daily\ntemperature,maxave,daily\ntemperature,minave,daily\nvprp,vprph09,daily\nvprp,vprph15,daily\nsolar,solarave,daily\nndvi,ndviave,month"
+  variables_list <- read.csv(textConnection(variables_list),
+                             stringsAsFactors = FALSE)
+  return(variables_list)
+}
+
+linux_operating_system <- function () {
+  if (length(grep("linux", sessionInfo()[[1]]$os)) == 1) {
+    os <- "Linux"
+    OsLinux <- TRUE
+  }
+  else if (length(grep("ming", sessionInfo()[[1]]$os)) == 1) {
+    os <- "Windows"
+    OsLinux <- FALSE
+  }
+  else {
+    print("Non Linux or Windows OS detected. Assume Linux-alike.")
+    os <- "Linux?"
+    OsLinux <- TRUE
+  }
+  return(OsLinux)
+}
+
+uncompress_linux <- function (filename){
+  print(filename)
+  system(sprintf("uncompress %s", filename))
+}
+
+decompress_7zip <- function(zipFileName, outputDirectory, delete) {
+  executableName <- executable_file_name()
+
+    arguments <- paste(sep = "", "e ", "\"", zipFileName, "\" ",
+        "\"-o", outputDirectory, "\" ", "")
+    print(arguments)
+    RunProcess(executableName, arguments)
+    if (delete) {
+        unlink(zipFileName)
+    }
+}
+
+executable_file_name <- function (){
+      executableName <- "C:\\Program Files\\7-Zip\\7z.exe"
+    if (file.exists(executableName)) {
+        return(executableName)
+    }
+    stop("Failed to find 7zip")
+}
+
+RunProcess <- function(executable, arguments) {
+    command = paste(sep = "", "\"", executable, "\" ", arguments)
+    print(command)
+    exitCode = system(command, intern = FALSE, ignore.stdout = FALSE,
+        ignore.stderr = FALSE, wait = TRUE, input = NULL, show.output.on.console = TRUE,
+        invisible = FALSE)
+    if (exitCode != 0) {
+        stop("Process returned error")
+    }
+    return(exitCode)
+}
+
+```
+After loading the previous functions, now it is possible to download AWAP grid
+files from the BoM, examples from I. Hanigan.
+
+```{r, echo = T, eval = T}
+
+vars <- c("maxave", "minave", "totals")
+
+for (measure in vars) {
+  get_awap_data(start_date = "2016-04-19", end_date = "2016-04-20", measure)
+}
+
+```
+
+To start cleaning up the grid files for mapping or looking at specific areas,
+download Australia, level 2 data from the [GADM database of Global
+Administrative Areas](http://gadm.org).
+
+Using the GADM data, crop the grid files and mask using the administrative
+boundaries to map the area of interest.
+
+```{r, echo = T, eval = T}
+
+library(raster)
+Oz <- getData(name = "GADM", download = TRUE, country = "AUS", level = 2)
+
+# Subset Australia data to QLD
+QLD <- Oz[Oz@data$NAME_1 == "Queensland", ]
+
+# Create a raster stack object of all the grid files we just downloaded
+cfiles <- stack(dir(pattern = "grid$"))
+```
+
+Crop, mask and plot the raster stack using Australia
+```{r, echo = TRUE}
+
+Oz_data <- crop(cfiles, Oz)
+Oz_data <- mask(Oz_data, Oz)
+plot(Oz_data)
+```
+
+Crop, plot and then mask and plot the raster stack using QLD to see the
+difference between cropping and masking.
+
+```{r, echo = TRUE}
+QLD_data <- crop(cfiles, QLD)
+plot(QLD_data)
+QLD_data <- mask(QLD_data, QLD)
+plot(QLD_data)
+
+```
