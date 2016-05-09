@@ -456,147 +456,16 @@ Ivan Hanigan, <ivan.hanigan@gmail.com>, J. Guillaume, F. Markham, G. Williamson
 and I. Szarka wrote the original versions of the functions used here to retrieve
 the AWAP grid files for the R packages,
 	[awaptools](https://github.com/swish-climate-impact-assessment/awaptools)
-and [swishdbtools](https://github.com/swish-climate-impact-assessment/swishdbtools).
 
 Once these functions are loaded, you can download and process AWAP grids.
 
 ```{r, echo = T, eval = T}
-
-get_awap_data <- function(start_date, end_date, measure_i) {
-  variables_list <- list_variables()
-  variable <- variables_list[which(variables_list$measure == measure_i), ]
-  datelist <- seq(as.Date(start_date), as.Date(end_date), 1)
-  for (date_i in datelist) {
-    date_i <- as.Date(date_i, origin = "1970-01-01")
-    sdate <- as.character(date_i)
-    edate <- date_i
-    if (!file.exists(sprintf("%s_%s%s.grid", measure_i, gsub("-", "", sdate),
-                             gsub("-", "", edate)))) {
-      get_data_range(variable = as.character(variable[, 1]),
-                     measure = as.character(variable[, 2]),
-                     timestep = as.character(variable[, 3]),
-                     startdate = as.POSIXct(sdate),
-                     enddate = as.POSIXct(edate))
-      fname <- sprintf("%s_%s%s.grid.Z", measure_i, gsub("-", "", sdate),
-                       gsub("-", "", edate))
-      if (file.info(fname)$size == 0) {
-        file.remove(fname)
-        next
-      }
-      os <- linux_operating_system()
-      if (os) {
-        uncompress_linux(filename = fname)
-      }
-      else {
-        decompress_7zip(zipFileName = fname, outputDirectory = getwd(), TRUE)
-      }
-    }
+if(!require("awaptools"))
+  {
+    library(devtools)
+    install_github("swish-climate-impact-assessment/awaptools")
   }
-}
-
-get_data_range <- function(variable, measure, timestep, startdate, enddate) {
-  if (timestep == "daily") {
-    thisdate <- startdate
-    while (thisdate <= enddate) {
-      get_data(variable, measure, timestep, format(as.POSIXct(thisdate),
-                                                   "%Y%m%d"),
-               format(as.POSIXct(thisdate), "%Y%m%d"))
-      thisdate <- thisdate + as.double(as.difftime(1, units = "days"),
-                                       units = "secs")
-    }
-  }
-  else if (timestep == "month" | timestep == "monthly") {
-    timestep <- "month"
-    startdate <- as.POSIXlt(startdate)
-    startdate$mday <- 1
-    data_period_start <- seq(as.Date(startdate), as.Date(enddate),
-                             by = "month")
-    data_period_end <- as.Date(sapply(data_period_start,
-                                      FUN = function(x) {
-                                        as.character(seq(x, x + 40,
-                                                         by = "month")[2] - 1)
-                                      }
-    ))
-    for (i in 1:length(data_period_start)) {
-      get_data(variable, measure, timestep,
-               format(as.POSIXct(data_period_start[i]), "%Y%m%d"),
-               format(as.POSIXct(data_period_end[i]), "%Y%m%d"))
-    }
-  }
-}
-
-get_data <- function(variable, measure, timestep, startdate, enddate) {
-  url <- "http://www.bom.gov.au/web03/ncc/www/awap/{variable}/{measure}/{timestep}/grid/0.05/history/nat/{startdate}{enddate}.grid.Z"
-  url <- gsub("{variable}", variable, url, fixed = TRUE)
-  url <- gsub("{measure}", measure, url, fixed = TRUE)
-  url <- gsub("{timestep}", timestep, url, fixed = TRUE)
-  url <- gsub("{startdate}", startdate, url, fixed = TRUE)
-  url <- gsub("{enddate}", enddate, url, fixed = TRUE)
-  try(download.file(url, sprintf("%s_%s%s.grid.Z", measure, startdate, enddate),
-                    mode = "wb"))
-}
-
-list_variables <- function() {
-  variables_list <- "variable,measure,timestep\nrainfall,totals,daily\ntemperature,maxave,daily\ntemperature,minave,daily\nvprp,vprph09,daily\nvprp,vprph15,daily\nsolar,solarave,daily\nndvi,ndviave,month"
-  variables_list <- read.csv(textConnection(variables_list),
-                             stringsAsFactors = FALSE)
-  return(variables_list)
-}
-
-linux_operating_system <- function () {
-  if (length(grep("linux", sessionInfo()[[1]]$os)) == 1) {
-    os <- "Linux"
-    OsLinux <- TRUE
-  }
-  else if (length(grep("ming", sessionInfo()[[1]]$os)) == 1) {
-    os <- "Windows"
-    OsLinux <- FALSE
-  }
-  else {
-    print("Non Linux or Windows OS detected. Assume Linux-alike.")
-    os <- "Linux?"
-    OsLinux <- TRUE
-  }
-  return(OsLinux)
-}
-
-uncompress_linux <- function (filename){
-  print(filename)
-  system(sprintf("uncompress %s", filename))
-}
-
-decompress_7zip <- function(zipFileName, outputDirectory, delete) {
-  executableName <- executable_file_name()
-
-    arguments <- paste(sep = "", "e ", "\"", zipFileName, "\" ",
-        "\"-o", outputDirectory, "\" ", "")
-    print(arguments)
-    RunProcess(executableName, arguments)
-    if (delete) {
-        unlink(zipFileName)
-    }
-}
-
-executable_file_name <- function (){
-      executableName <- "C:\\Program Files\\7-Zip\\7z.exe"
-    if (file.exists(executableName)) {
-        return(executableName)
-    }
-    stop("Failed to find 7zip")
-}
-
-RunProcess <- function(executable, arguments) {
-    command = paste(sep = "", "\"", executable, "\" ", arguments)
-    print(command)
-    exitCode = system(command, intern = FALSE, ignore.stdout = FALSE,
-        ignore.stderr = FALSE, wait = TRUE, input = NULL, show.output.on.console = TRUE,
-        invisible = FALSE)
-    if (exitCode != 0) {
-        stop("Process returned error")
-    }
-    return(exitCode)
-}
-
+library(awaptools)
 ```
 After loading the previous functions, now it is possible to download AWAP grid
 files from the BoM, examples from I. Hanigan.
@@ -606,10 +475,22 @@ files from the BoM, examples from I. Hanigan.
 vars <- c("maxave", "minave", "totals")
 
 for (measure in vars) {
-  get_awap_data(start_date = "2016-04-19", end_date = "2016-04-20", measure)
+  get_awap_data(start = "2016-04-21", end = "2016-05-09", measure = measure)
 }
 
+# load some, plot to check, and demonstrate conversion to GeoTIF
+cfiles <-  dir(pattern="grid$")
+par(mfrow= c(2,2))
+for (i in 1:4) {
+  #i <- 1 ## for stepping thru
+  gridname <- cfiles[[i]]
+  r <- raster(gridname)
+  plot(r) # plot to look at
+  writeRaster(r, gsub('.grid','',gridname), format="GTiff", overwrite = TRUE)
+}
 ```
+
+For additional processing codes see the short demo in [https://github.com/swish-climate-impact-assessment/awaptools/blob/master/README.md]()
 
 To start cleaning up the grid files for mapping or looking at specific areas,
 download Australia, level 2 data from the [GADM database of Global
